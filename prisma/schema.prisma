@@ -1,0 +1,628 @@
+// SportStrike — Production database schema
+// Supports betting, fantasy, prediction markets, wallet, KYC, admin
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────
+
+enum UserRole {
+  USER
+  ADMIN
+  MODERATOR
+  SUPPORT
+}
+
+enum KycStatus {
+  PENDING
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+enum SportType {
+  CRICKET
+  FOOTBALL
+  BASKETBALL
+  TENNIS
+  KABADDI
+  ESPORTS
+  OTHER
+}
+
+enum MatchStatus {
+  SCHEDULED
+  LIVE
+  INNINGS_BREAK
+  COMPLETED
+  CANCELLED
+  ABANDONED
+}
+
+enum MarketType {
+  MATCH_WINNER
+  TOSS
+  OVER_RUNS
+  BALL_BY_BALL
+  SESSION
+  HANDICAP
+  TOTAL_GOALS
+  BOTH_TEAMS_SCORE
+  CUSTOM
+}
+
+enum MarketStatus {
+  OPEN
+  SUSPENDED
+  CLOSED
+  SETTLED
+}
+
+enum BetStatus {
+  PENDING
+  ACCEPTED
+  WON
+  LOST
+  VOID
+  CASHED_OUT
+}
+
+enum TransactionType {
+  DEPOSIT
+  WITHDRAWAL
+  BET_PLACED
+  BET_WON
+  BET_REFUND
+  BONUS
+  CASHBACK
+  REFERRAL
+  FANTASY_ENTRY
+  FANTASY_WIN
+  PREDICTION_BUY
+  PREDICTION_SELL
+  PREDICTION_SETTLE
+  CASHOUT
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum ContestType {
+  MEGA
+  HEAD_TO_HEAD
+  PRIVATE
+  PRACTICE
+}
+
+enum ContestStatus {
+  UPCOMING
+  LIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum PredictionMarketStatus {
+  ACTIVE
+  PAUSED
+  RESOLVED
+  CANCELLED
+}
+
+// ─── User & Auth ─────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  email         String?   @unique
+  phone         String?   @unique
+  passwordHash  String?
+  displayName   String
+  avatar        String?
+  role          UserRole  @default(USER)
+  isVerified    Boolean   @default(false)
+  is2FAEnabled  Boolean   @default(false)
+  twoFASecret   String?
+  googleId      String?   @unique
+  referralCode  String    @unique
+  referredById  String?
+  referredBy    User?     @relation("Referrals", fields: [referredById], references: [id])
+  referrals     User[]    @relation("Referrals")
+  locale        String    @default("en")
+  theme         String    @default("dark")
+  vipTier       Int       @default(0)
+  lastLoginAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  wallet            Wallet?
+  kyc               Kyc?
+  sessions          Session[]
+  bets              Bet[]
+  betSlips          BetSlip[]
+  fantasyTeams      FantasyTeam[]
+  fantasyEntries    FantasyEntry[]
+  predictionOrders  PredictionOrder[]
+  predictionPortfolio PredictionPortfolio[]
+  notifications     Notification[]
+  achievements      UserAchievement[]
+  auditLogs         AuditLog[]
+  chatMessages      ChatMessage[]
+
+  @@index([email])
+  @@index([phone])
+  @@index([referralCode])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshToken String   @unique
+  deviceInfo   String?
+  ipAddress    String?
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+}
+
+model OtpVerification {
+  id        String   @id @default(cuid())
+  phone     String
+  otp       String
+  expiresAt DateTime
+  verified  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([phone])
+}
+
+// ─── KYC ─────────────────────────────────────────────────────
+
+model Kyc {
+  id              String    @id @default(cuid())
+  userId          String    @unique
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status          KycStatus @default(PENDING)
+  panNumber       String?
+  aadhaarNumber   String?
+  panDocumentUrl  String?
+  aadhaarFrontUrl String?
+  aadhaarBackUrl  String?
+  selfieUrl       String?
+  rejectionReason String?
+  reviewedBy      String?
+  reviewedAt      DateTime?
+  submittedAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// ─── Wallet ──────────────────────────────────────────────────
+
+model Wallet {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balance         Decimal  @default(0) @db.Decimal(14, 2)
+  bonusBalance    Decimal  @default(0) @db.Decimal(14, 2)
+  lockedBalance   Decimal  @default(0) @db.Decimal(14, 2)
+  totalDeposited  Decimal  @default(0) @db.Decimal(14, 2)
+  totalWithdrawn  Decimal  @default(0) @db.Decimal(14, 2)
+  encryptionSalt  String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  transactions Transaction[]
+}
+
+model Transaction {
+  id            String            @id @default(cuid())
+  walletId      String
+  wallet        Wallet            @relation(fields: [walletId], references: [id])
+  type          TransactionType
+  status        TransactionStatus @default(PENDING)
+  amount        Decimal           @db.Decimal(14, 2)
+  balanceAfter  Decimal           @db.Decimal(14, 2)
+  reference     String?
+  metadata      Json?
+  paymentMethod String?
+  externalId    String?
+  createdAt     DateTime          @default(now())
+
+  @@index([walletId])
+  @@index([type])
+  @@index([createdAt])
+}
+
+model WithdrawalRequest {
+  id            String            @id @default(cuid())
+  userId        String
+  amount        Decimal           @db.Decimal(14, 2)
+  status        TransactionStatus @default(PENDING)
+  upiId         String?
+  bankAccount   String?
+  ifsc          String?
+  reviewedBy    String?
+  reviewedAt    DateTime?
+  rejectionNote String?
+  createdAt     DateTime          @default(now())
+
+  @@index([userId])
+  @@index([status])
+}
+
+// ─── Sports & Matches ────────────────────────────────────────
+
+model Sport {
+  id          String    @id @default(cuid())
+  name        String
+  slug        String    @unique
+  type        SportType
+  icon        String?
+  isActive    Boolean   @default(true)
+  sortOrder   Int       @default(0)
+  tournaments Tournament[]
+  createdAt   DateTime  @default(now())
+}
+
+model Tournament {
+  id        String   @id @default(cuid())
+  sportId   String
+  sport     Sport    @relation(fields: [sportId], references: [id])
+  name      String
+  slug      String   @unique
+  season    String?
+  logo      String?
+  isActive  Boolean  @default(true)
+  matches   Match[]
+  createdAt DateTime @default(now())
+
+  @@index([sportId])
+}
+
+model Team {
+  id        String   @id @default(cuid())
+  name      String
+  shortName String
+  logo      String?
+  country   String?
+  players   Player[]
+  homeMatches Match[] @relation("HomeTeam")
+  awayMatches Match[] @relation("AwayTeam")
+  createdAt DateTime @default(now())
+}
+
+model Player {
+  id           String   @id @default(cuid())
+  teamId       String?
+  team         Team?    @relation(fields: [teamId], references: [id])
+  name         String
+  role         String?
+  credits      Decimal  @default(8) @db.Decimal(5, 1)
+  image        String?
+  sportType    SportType
+  stats        Json?
+  fantasyPicks FantasyPlayerPick[]
+  createdAt    DateTime @default(now())
+
+  @@index([teamId])
+}
+
+model Match {
+  id            String      @id @default(cuid())
+  tournamentId  String
+  tournament    Tournament  @relation(fields: [tournamentId], references: [id])
+  homeTeamId    String
+  awayTeamId    String
+  homeTeam      Team        @relation("HomeTeam", fields: [homeTeamId], references: [id])
+  awayTeam      Team        @relation("AwayTeam", fields: [awayTeamId], references: [id])
+  status        MatchStatus @default(SCHEDULED)
+  venue         String?
+  startTime     DateTime
+  endTime       DateTime?
+  liveScore     Json?
+  commentary    Json?
+  statistics    Json?
+  winProbability Json?
+  externalId    String?
+  markets       Market[]
+  fantasyContests FantasyContest[]
+  chatMessages  ChatMessage[]
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([tournamentId])
+  @@index([status])
+  @@index([startTime])
+}
+
+// ─── Betting Engine ──────────────────────────────────────────
+
+model Market {
+  id          String       @id @default(cuid())
+  matchId     String
+  match       Match        @relation(fields: [matchId], references: [id])
+  name        String
+  type        MarketType
+  status      MarketStatus @default(OPEN)
+  description String?
+  metadata    Json?
+  selections  Selection[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([matchId])
+  @@index([status])
+}
+
+model Selection {
+  id        String   @id @default(cuid())
+  marketId  String
+  market    Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  name      String
+  odds      Decimal  @db.Decimal(8, 3)
+  isActive  Boolean  @default(true)
+  result    String?
+  bets      Bet[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([marketId])
+}
+
+model BetSlip {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  bets      Bet[]
+  totalStake Decimal @db.Decimal(14, 2)
+  potentialReturn Decimal @db.Decimal(14, 2)
+  isParlay  Boolean  @default(false)
+  status    BetStatus @default(PENDING)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Bet {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id])
+  betSlipId    String?
+  betSlip      BetSlip?  @relation(fields: [betSlipId], references: [id])
+  selectionId  String
+  selection    Selection @relation(fields: [selectionId], references: [id])
+  stake        Decimal   @db.Decimal(14, 2)
+  odds         Decimal   @db.Decimal(8, 3)
+  potentialWin Decimal   @db.Decimal(14, 2)
+  cashoutValue Decimal?  @db.Decimal(14, 2)
+  status       BetStatus @default(PENDING)
+  settledAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([userId])
+  @@index([status])
+}
+
+// ─── Fantasy Sports ──────────────────────────────────────────
+
+model FantasyContest {
+  id            String        @id @default(cuid())
+  matchId       String
+  match         Match         @relation(fields: [matchId], references: [id])
+  name          String
+  type          ContestType
+  status        ContestStatus @default(UPCOMING)
+  entryFee      Decimal       @db.Decimal(10, 2)
+  prizePool     Decimal       @db.Decimal(14, 2)
+  maxEntries    Int
+  currentEntries Int          @default(0)
+  prizeBreakdown Json?
+  isPrivate     Boolean       @default(false)
+  inviteCode    String?
+  startsAt      DateTime
+  endsAt        DateTime?
+  entries       FantasyEntry[]
+  createdAt     DateTime      @default(now())
+
+  @@index([matchId])
+  @@index([status])
+}
+
+model FantasyTeam {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  name      String
+  picks     FantasyPlayerPick[]
+  entries   FantasyEntry[]
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model FantasyPlayerPick {
+  id           String      @id @default(cuid())
+  fantasyTeamId String
+  fantasyTeam  FantasyTeam @relation(fields: [fantasyTeamId], references: [id], onDelete: Cascade)
+  playerId     String
+  player       Player      @relation(fields: [playerId], references: [id])
+  isCaptain    Boolean     @default(false)
+  isViceCaptain Boolean    @default(false)
+  points       Decimal     @default(0) @db.Decimal(8, 2)
+
+  @@unique([fantasyTeamId, playerId])
+}
+
+model FantasyEntry {
+  id           String         @id @default(cuid())
+  contestId    String
+  contest      FantasyContest @relation(fields: [contestId], references: [id])
+  userId       String
+  user         User           @relation(fields: [userId], references: [id])
+  fantasyTeamId String
+  fantasyTeam  FantasyTeam    @relation(fields: [fantasyTeamId], references: [id])
+  totalPoints  Decimal        @default(0) @db.Decimal(10, 2)
+  rank         Int?
+  prizeWon     Decimal?       @db.Decimal(14, 2)
+  createdAt    DateTime       @default(now())
+
+  @@unique([contestId, userId])
+  @@index([contestId])
+  @@index([totalPoints])
+}
+
+// ─── Prediction Markets (Probo-style) ────────────────────────
+
+model PredictionMarket {
+  id          String                 @id @default(cuid())
+  title       String
+  description String?
+  category    String
+  imageUrl    String?
+  status      PredictionMarketStatus @default(ACTIVE)
+  yesPrice    Decimal                @default(0.5) @db.Decimal(6, 4)
+  noPrice     Decimal                @default(0.5) @db.Decimal(6, 4)
+  volume      Decimal                @default(0) @db.Decimal(14, 2)
+  liquidity   Decimal                @default(10000) @db.Decimal(14, 2)
+  resolvesAt  DateTime
+  resolvedOutcome String?
+  orders      PredictionOrder[]
+  portfolios  PredictionPortfolio[]
+  priceHistory PredictionPriceHistory[]
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+
+  @@index([status])
+  @@index([category])
+}
+
+model PredictionOrder {
+  id        String   @id @default(cuid())
+  marketId  String
+  market    PredictionMarket @relation(fields: [marketId], references: [id])
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  side      String
+  shares    Decimal  @db.Decimal(14, 4)
+  price     Decimal  @db.Decimal(6, 4)
+  totalCost Decimal  @db.Decimal(14, 2)
+  createdAt DateTime @default(now())
+
+  @@index([marketId])
+  @@index([userId])
+}
+
+model PredictionPortfolio {
+  id        String   @id @default(cuid())
+  marketId  String
+  market    PredictionMarket @relation(fields: [marketId], references: [id])
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  yesShares Decimal  @default(0) @db.Decimal(14, 4)
+  noShares  Decimal  @default(0) @db.Decimal(14, 4)
+  avgYesPrice Decimal? @db.Decimal(6, 4)
+  avgNoPrice  Decimal? @db.Decimal(6, 4)
+  updatedAt DateTime @updatedAt
+
+  @@unique([marketId, userId])
+}
+
+model PredictionPriceHistory {
+  id        String   @id @default(cuid())
+  marketId  String
+  market    PredictionMarket @relation(fields: [marketId], references: [id])
+  yesPrice  Decimal  @db.Decimal(6, 4)
+  noPrice   Decimal  @db.Decimal(6, 4)
+  timestamp DateTime @default(now())
+
+  @@index([marketId, timestamp])
+}
+
+// ─── Notifications & Social ──────────────────────────────────
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  body      String
+  type      String
+  data      Json?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, isRead])
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  matchId   String
+  match     Match    @relation(fields: [matchId], references: [id])
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  message   String
+  createdAt DateTime @default(now())
+
+  @@index([matchId])
+}
+
+model Achievement {
+  id          String   @id @default(cuid())
+  name        String
+  description String
+  icon        String
+  criteria    Json
+  userAchievements UserAchievement[]
+}
+
+model UserAchievement {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id])
+  achievementId String
+  achievement   Achievement @relation(fields: [achievementId], references: [id])
+  earnedAt      DateTime @default(now())
+
+  @@unique([userId, achievementId])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String
+  entity    String
+  entityId  String?
+  metadata  Json?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+model FraudAlert {
+  id          String   @id @default(cuid())
+  userId      String
+  type        String
+  severity    String
+  description String
+  metadata    Json?
+  isResolved  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([isResolved])
+}
